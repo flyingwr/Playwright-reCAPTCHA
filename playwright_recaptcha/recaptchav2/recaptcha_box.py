@@ -175,29 +175,29 @@ class RecaptchaBox(ABC):
     @property
     def audio_challenge_button(self) -> Locator:
         """The reCAPTCHA audio challenge button locator."""
-        return self.bframe_frame.get_by_role("button", name="Get an audio challenge")
+        return self.bframe_frame.get_by_role("button", name=re.compile("Get an audio challenge|Receber um desafio de áudio"))
 
     @property
     def new_challenge_button(self) -> Locator:
         """The reCAPTCHA new challenge button locator."""
-        return self.bframe_frame.get_by_role("button", name="Get a new challenge")
+        return self.bframe_frame.get_by_role("button", name=re.compile("Get a new challenge|Receber outro desafio"))
 
     @property
     def audio_download_button(self) -> Locator:
         """The reCAPTCHA audio download button locator."""
         return self.bframe_frame.get_by_role(
-            "link", name="Alternatively, download audio as MP3"
+            "link", name=re.compile("Alternatively, download audio as MP3|Como alternativa, faça o download do áudio como MP3")
         )
 
     @property
     def audio_challenge_textbox(self) -> Locator:
         """The reCAPTCHA audio challenge textbox locator."""
-        return self.bframe_frame.get_by_role("textbox", name="Enter what you hear")
+        return self.bframe_frame.get_by_role("textbox", name=re.compile("Enter what you hear|Digite o que você ouve"))
 
     @property
     def audio_challenge_verify_button(self) -> Locator:
         """The reCAPTCHA audio challenge verify button locator."""
-        return self.bframe_frame.get_by_role("button", name="Verify")
+        return self.bframe_frame.get_by_role("button", name=re.compile("Verify|Verificar"))
 
     def frames_are_attached(self) -> bool:
         """
@@ -394,7 +394,7 @@ class SyncRecaptchaBox(RecaptchaBox):
 
             if (
                 bframe_frame.get_by_role(
-                    "button", name="Get an audio challenge"
+                    "button", name=re.compile("Get an audio challenge|Receber um desafio de áudio")
                 ).is_visible()
                 or checkbox.is_visible()
                 and not checkbox.is_checked()
@@ -423,7 +423,7 @@ class SyncRecaptchaBox(RecaptchaBox):
         bool
             True if the reCAPTCHA rate limit message is visible, False otherwise.
         """
-        return self.bframe_frame.get_by_text("Try again later").is_visible()
+        return self.bframe_frame.get_by_text(re.compile("Try again later|Tente novamente mais tarde")).is_visible()
 
     @RecaptchaBox._check_if_attached
     def solve_failure_is_visible(self) -> bool:
@@ -436,7 +436,7 @@ class SyncRecaptchaBox(RecaptchaBox):
             True if the reCAPTCHA solve failure message is visible, False otherwise.
         """
         return self.bframe_frame.get_by_text(
-            "Multiple correct solutions required - please solve more."
+            re.compile("Multiple correct solutions required - please solve more.|São necessárias várias soluções corretas. Solucione mais.")
         ).is_visible()
 
     @RecaptchaBox._check_if_attached
@@ -449,7 +449,7 @@ class SyncRecaptchaBox(RecaptchaBox):
         bool
             True if the reCAPTCHA audio challenge is visible, False otherwise.
         """
-        return self.bframe_frame.get_by_text("Press PLAY to listen").is_visible()
+        return self.bframe_frame.get_by_text(re.compile("Press PLAY to listen|Pressione REPRODUZIR para ouvir")).is_visible()
 
     @RecaptchaBox._check_if_attached
     def is_solved(self) -> bool:
@@ -474,6 +474,8 @@ class AsyncRecaptchaBox(RecaptchaBox):
         The reCAPTCHA anchor frame.
     bframe_frame : AsyncFrame
         The reCAPTCHA bframe frame.
+    has_checkbox : bool, optional
+        True if the page has a reCAPTCHA checkbox to be selected
 
     Attributes
     ----------
@@ -517,15 +519,16 @@ class AsyncRecaptchaBox(RecaptchaBox):
         If no unchecked reCAPTCHA boxes were found.
     """
 
-    def __init__(self, anchor_frame: AsyncFrame, bframe_frame: AsyncFrame) -> None:
+    def __init__(self, anchor_frame: AsyncFrame, bframe_frame: AsyncFrame, has_checkbox: bool = True) -> None:
         self._anchor_frame = anchor_frame
         self._bframe_frame = bframe_frame
+        self.has_checkbox = has_checkbox
 
     def __repr__(self) -> str:
-        return f"AsyncRecaptchaBox(anchor_frame={self._anchor_frame!r}, bframe_frame={self._bframe_frame!r})"
+        return f"AsyncRecaptchaBox(anchor_frame={self._anchor_frame!r}, bframe_frame={self._bframe_frame!r}, has_checkbox={self.has_checkbox})"
 
     @classmethod
-    async def from_frames(cls, frames: Iterable[AsyncFrame]) -> AsyncRecaptchaBox:
+    async def from_frames(cls, frames: Iterable[AsyncFrame], has_checkbox: bool = True) -> AsyncRecaptchaBox:
         """
         Create a reCAPTCHA box using a list of frames.
 
@@ -549,16 +552,17 @@ class AsyncRecaptchaBox(RecaptchaBox):
         frame_pairs = cls._get_recaptcha_frame_pairs(frames)
 
         for anchor_frame, bframe_frame in frame_pairs:
-            checkbox = anchor_frame.get_by_role("checkbox", name="I'm not a robot")
+            if has_checkbox:
+                checkbox = anchor_frame.get_by_role("checkbox", name="I'm not a robot")
 
             if (
                 await bframe_frame.get_by_role(
-                    "button", name="Get an audio challenge"
+                    "button", name=re.compile("Get an audio challenge|Receber um desafio de áudio")
                 ).is_visible()
-                or await checkbox.is_visible()
-                and not await checkbox.is_checked()
+                or (await checkbox.is_visible() if has_checkbox else True)
+                and (not await checkbox.is_checked() if has_checkbox else True)
             ):
-                return cls(anchor_frame, bframe_frame)
+                return cls(anchor_frame, bframe_frame, has_checkbox)
 
         raise RecaptchaSolveError("No unchecked reCAPTCHA boxes were found.")
 
@@ -582,7 +586,7 @@ class AsyncRecaptchaBox(RecaptchaBox):
         bool
             True if the reCAPTCHA rate limit message is visible, False otherwise.
         """
-        return await self.bframe_frame.get_by_text("Try again later").is_visible()
+        return await self.bframe_frame.get_by_text(re.compile("Try again later|Tente novamente mais tarde")).is_visible()
 
     @RecaptchaBox._check_if_attached
     async def solve_failure_is_visible(self) -> bool:
@@ -595,7 +599,7 @@ class AsyncRecaptchaBox(RecaptchaBox):
             True if the reCAPTCHA solve failure message is visible, False otherwise.
         """
         return await self.bframe_frame.get_by_text(
-            "Multiple correct solutions required - please solve more."
+            re.compile("Multiple correct solutions required - please solve more.|São necessárias várias soluções corretas. Solucione mais.")
         ).is_visible()
 
     @RecaptchaBox._check_if_attached
@@ -608,7 +612,7 @@ class AsyncRecaptchaBox(RecaptchaBox):
         bool
             True if the reCAPTCHA audio challenge is visible, False otherwise.
         """
-        return await self.bframe_frame.get_by_text("Press PLAY to listen").is_visible()
+        return await self.bframe_frame.get_by_text(re.compile("Press PLAY to listen|Pressione REPRODUZIR para ouvir")).is_visible()
 
     @RecaptchaBox._check_if_attached
     async def is_solved(self) -> bool:

@@ -30,11 +30,15 @@ class AsyncSolver:
         The playwright page to solve the reCAPTCHA on.
     attempts : int, optional
         The number of solve attempts, by default 3.
+    has_checkbox : bool, optional
+        True if the page has a reCAPTCHA checkbox to be selected
 
     Attributes
     ----------
     token : Optional[str]
         The g-recaptcha-response token.
+    userverify_retrieved : bool
+        True if the solver has received a response for reCAPTCHA userverify request
 
     Methods
     -------
@@ -53,10 +57,12 @@ class AsyncSolver:
         If the reCAPTCHA could not be solved.
     """
 
-    def __init__(self, page: Page, attempts: int = 3) -> None:
+    def __init__(self, page: Page, attempts: int = 3, has_checkbox: bool = True) -> None:
         self._page = page
         self._attempts = attempts
+        self.has_checkbox = has_checkbox
         self.token: Optional[str] = None
+        self.userverify_retrieved: bool = False
 
     def __repr__(self) -> str:
         return f"AsyncSolver(page={self._page!r}, attempts={self._attempts!r})"
@@ -131,7 +137,9 @@ class AsyncSolver:
         if token_match is not None:
             self.token = token_match.group(1)
 
-    async def _click_checkbox(self, recaptcha_box: AsyncRecaptchaBox) -> None:
+        self.userverify_retrieved = True
+
+    async def _solve(self, recaptcha_box: AsyncRecaptchaBox) -> None:
         """
         Click the reCAPTCHA checkbox.
 
@@ -140,10 +148,11 @@ class AsyncSolver:
         recaptcha_box : AsyncRecaptchaBox
             The reCAPTCHA box.
         """
-        await recaptcha_box.checkbox.click(force=True)
+        if self.has_checkbox:
+            await recaptcha_box.checkbox.click(force=True)
 
         while recaptcha_box.frames_are_attached():
-            if await recaptcha_box.is_solved():
+            if await recaptcha_box.is_solved() if self.has_checkbox else self.userverify_retrieved:
                 if self.token is None:
                     raise RecaptchaSolveError
 
@@ -260,19 +269,20 @@ class AsyncSolver:
             If the reCAPTCHA could not be solved.
         """
         self.token = None
+        self.userverify_retrieved = False
         self._page.on("response", self._extract_token)
 
         attempts = attempts or self._attempts
-        recaptcha_box = await AsyncRecaptchaBox.from_frames(self._page.frames)
+        recaptcha_box = await AsyncRecaptchaBox.from_frames(self._page.frames, self.has_checkbox)
 
         if (
-            await recaptcha_box.checkbox.is_hidden()
+            await recaptcha_box.checkbox.is_hidden() if self.has_checkbox else True
             and await recaptcha_box.audio_challenge_button.is_disabled()
         ):
             raise RecaptchaNotFoundError
 
-        if await recaptcha_box.checkbox.is_visible():
-            await self._click_checkbox(recaptcha_box)
+        if await recaptcha_box.checkbox.is_visible() if self.has_checkbox else True:
+            await self._solve(recaptcha_box)
 
             if self.token is not None:
                 return self.token
