@@ -10,7 +10,7 @@ from typing import Any, Optional
 
 import pydub
 import speech_recognition
-from playwright.async_api import Page, Response
+from playwright.async_api import Page, Request, Response
 
 from playwright_recaptcha.errors import (
     RecaptchaNotFoundError,
@@ -39,6 +39,8 @@ class AsyncSolver:
         The g-recaptcha-response token.
     userverify_retrieved : bool
         True if the solver has received a response for reCAPTCHA userverify request
+    waiting_for_uvresp : bool
+        True if the page is waiting for reCAPTCHA userverify response
 
     Methods
     -------
@@ -61,8 +63,14 @@ class AsyncSolver:
         self._page = page
         self._attempts = attempts
         self.has_checkbox = has_checkbox
+
         self.token: Optional[str] = None
+
         self.userverify_retrieved: bool = False
+        self.waiting_for_uvresp: bool = False
+
+        self._page.on("request", self._handle_request)
+        self._page.on("response", self._extract_token)
 
     def __repr__(self) -> str:
         return f"AsyncSolver(page={self._page!r}, attempts={self._attempts!r})"
@@ -71,7 +79,7 @@ class AsyncSolver:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
-        self.close()
+        await self.close()
 
     async def _convert_audio_to_text(self, audio_url: str) -> Optional[str]:
         """
@@ -120,6 +128,10 @@ class AsyncSolver:
         """Delay the execution for a random amount of time between 1 and 4 seconds."""
         await self._page.wait_for_timeout(random.randint(1000, 4000))
 
+    async def _handle_request(self, request: Request):
+        if re.search("/recaptcha/(api2|enterprise)/userverify", request.url) is not None:
+            self.waiting_for_uvresp = True
+
     async def _extract_token(self, response: Response) -> None:
         """
         Extract the g-recaptcha-response token from the userverify response.
@@ -131,12 +143,13 @@ class AsyncSolver:
         """
         if re.search("/recaptcha/(api2|enterprise)/userverify", response.url) is None:
             return
-
+        
         token_match = re.search('"uvresp","(.*?)"', await response.text())
 
         if token_match is not None:
             self.token = token_match.group(1)
 
+        self.waiting_for_uvresp = False
         self.userverify_retrieved = True
 
     async def _solve(self, recaptcha_box: AsyncRecaptchaBox) -> None:
@@ -238,9 +251,13 @@ class AsyncSolver:
 
             await self._page.wait_for_timeout(250)
 
-    def close(self) -> None:
+    async def close(self) -> None:
         """Remove the userverify response listener."""
+        while self.waiting_for_uvresp:
+            await asyncio.sleep(0)
+
         try:
+            self._page.remove_listener("request", self._handle_request)
             self._page.remove_listener("response", self._extract_token)
         except KeyError:
             pass
@@ -270,7 +287,6 @@ class AsyncSolver:
         """
         self.token = None
         self.userverify_retrieved = False
-        self._page.on("response", self._extract_token)
 
         attempts = attempts or self._attempts
         recaptcha_box = await AsyncRecaptchaBox.from_frames(self._page.frames, self.has_checkbox)
